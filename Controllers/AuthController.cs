@@ -1,6 +1,10 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using SuperNotesBackend.Models;
+using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 
 namespace SuperNotesBackend.Controllers
 {
@@ -8,31 +12,71 @@ namespace SuperNotesBackend.Controllers
     [ApiController]
     public class AuthController : ControllerBase
     {
-        // Simulate user login (this can be extended to check with a database)
+        // Login with just username
         [HttpPost("login")]
-        public IActionResult Login([FromBody] LoginRequest request)
+        public async Task<IActionResult> Login([FromBody] LoginRequest request)
         {
-            if (request.Username == "test" && request.Password == "password")  // Simulated check
+            if (string.IsNullOrEmpty(request.Username))
             {
-                // Create session
-                HttpContext.Session.SetString("User", request.Username);
-                return Ok("Logged in successfully.");
+                return BadRequest("Username is required");
             }
-            return Unauthorized("Invalid credentials.");
+
+            // Create the claims for the user
+            var claims = new List<Claim>
+            {
+                new Claim(ClaimTypes.Name, request.Username),
+                new Claim("UserId", request.Username)
+            };
+
+            var claimsIdentity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+            var authProperties = new AuthenticationProperties
+            {
+                IsPersistent = true,
+                ExpiresUtc = DateTimeOffset.UtcNow.AddHours(1)
+            };
+
+            // Sign in the user
+            await HttpContext.SignInAsync(
+                CookieAuthenticationDefaults.AuthenticationScheme,
+                new ClaimsPrincipal(claimsIdentity),
+                authProperties);
+
+            // Also set the session (as backup)
+            HttpContext.Session.SetString("User", request.Username);
+
+            return Ok(new { message = "Logged in successfully", username = request.Username });
         }
 
-        // Logout user and clear session
+        // Logout user
         [HttpPost("logout")]
-        public IActionResult Logout()
+        [Authorize]
+        public async Task<IActionResult> Logout()
         {
-            HttpContext.Session.Clear();  // Clear session data
+            // Clear the existing external cookie
+            await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            
+            // Clear session
+            HttpContext.Session.Clear();
+            
             return Ok("Logged out successfully.");
+        }
+
+        // Check if user is authenticated
+        [HttpGet("check")]
+        [Authorize]
+        public IActionResult CheckAuth()
+        {
+            var username = User.Identity?.Name;
+            if (string.IsNullOrEmpty(username))
+            {
+                return Unauthorized("Not authenticated");
+            }
+            return Ok(new { username = username });
         }
     }
     
     public class LoginRequest
     {
         public string Username { get; set; }
-        public string Password { get; set; }
     }
 }
